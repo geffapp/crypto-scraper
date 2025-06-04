@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const puppeteer = require('puppeteer'); // Moved here, as it's used by puppeteer.launch
+const puppeteer = require('puppeteer');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -9,20 +9,24 @@ app.get('/run', async (req, res) => {
   let page;    // Define page outside try for access in finally
 
   try { // OUTER TRY for the entire request
+    console.log("Attempting to launch browser...");
     browser = await puppeteer.launch({
       headless: true,
-      executablePath: '/usr/bin/chromium-browser', // Path for Railway/Linux
+      // No executablePath specified - Puppeteer will try to use its own bundled/downloaded Chromium
+      // This is often more reliable in PaaS environments like Railway.
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',     // Often needed in constrained Docker/server environments
+        '--disable-dev-shm-usage',     // Crucial for Docker/CI environments
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
         '--no-zygote',
-        '--disable-gpu'                // Can help in headless server environments
+        '--disable-gpu'                // Often helpful in headless server environments
       ],
     });
-    page = await browser.newPage(); // Create page object ONCE
+    console.log("Browser launched successfully.");
+    page = await browser.newPage();
+    console.log("New page created.");
 
     // Optional: Set up console listener for debugging page.evaluate
     // page.on('console', async msg => {
@@ -38,8 +42,8 @@ app.get('/run', async (req, res) => {
     // });
 
     // --- Login and navigate ---
-    console.log("Navigating to login page...");
-    await page.goto('https://cryptorecherche.com/login', { waitUntil: 'networkidle0' });
+    console.log("Navigating to login page: https://cryptorecherche.com/login");
+    await page.goto('https://cryptorecherche.com/login', { waitUntil: 'networkidle0', timeout: 60000 }); // Increased timeout
     
     console.log("Attempting to fill login form...");
     // Using selectors from your latest snippet. Verify these are correct for the login page.
@@ -48,34 +52,29 @@ app.get('/run', async (req, res) => {
     await page.click('button[type="submit"]'); // Verify this button selector
     
     console.log("Login submitted. Waiting for navigation...");
-    await page.waitForNavigation({ waitUntil: 'networkidle0' });
+    await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 60000 }); // Increased timeout
     console.log("Current URL after login attempt:", page.url());
-    await page.screenshot({ path: 'screenshot_after_login_attempt.png', fullPage: true });
+    // await page.screenshot({ path: 'screenshot_after_login_attempt.png', fullPage: true }); // Optional for debugging
 
 
-    console.log("Navigating to articles list page...");
-    await page.goto('https://cryptorecherche.com/articles', { waitUntil: 'networkidle0' });
-    await page.screenshot({ path: 'screenshot_articles_list_page.png', fullPage: true });
+    console.log("Navigating to articles list page: https://cryptorecherche.com/articles");
+    await page.goto('https://cryptorecherche.com/articles', { waitUntil: 'networkidle0', timeout: 60000 }); // Increased timeout
+    // await page.screenshot({ path: 'screenshot_articles_list_page.png', fullPage: true }); // Optional for debugging
     console.log("Current URL on articles list page:", page.url());
 
     // --- Simplified scraping from the /articles list page ---
-    // This will attempt to get data from the first matching '.elementor-post'
-    // This is different from the multi-section scraping on the detail page we worked on before.
     console.log("Extracting data from the articles list page...");
     const data = await page.evaluate(() => {
-      // This selector is generic. For the list page, we previously identified
-      // 'div.jet-listing-grid__item' as the container for each article.
-      // You might need to adjust these selectors for accuracy.
       const articleElement = document.querySelector('.elementor-post'); // Targets the first match
       
       const title = articleElement?.querySelector('.elementor-post__title')?.innerText.trim() || 'Title not found on list page';
       const link = articleElement?.querySelector('a')?.href || 'Link not found on list page';
-      const video = articleElement?.querySelector('iframe')?.src || 'Video not found on list page (expected)'; // Video is unlikely here
+      const video = articleElement?.querySelector('iframe')?.src || 'Video not found on list page (expected)';
 
       return {
         title: title,
         link: link,
-        video: video, // This will likely be null or 'Video not found...'
+        video: video,
         date: new Date().toISOString(),
       };
     });
@@ -87,17 +86,16 @@ app.get('/run', async (req, res) => {
     console.error("Error during Puppeteer script execution:", err.message);
     console.error(err.stack); // Log the full stack trace for more details
 
-    if (page && !res.headersSent) { // Check if page exists and response not already sent
+    if (page && !res.headersSent) {
         try {
-            // Naming screenshots with timestamp to avoid overwriting
             const errorScreenshotPath = `error_screenshot_${Date.now()}.png`;
-            await page.screenshot({ path: errorScreenshotPath, fullPage: true });
-            console.log(`📸 Screenshot taken on error: ${errorScreenshotPath}`);
+            // await page.screenshot({ path: errorScreenshotPath, fullPage: true }); // Screenshots might not work if browser crashed
+            console.log(`📸 Attempted to take error screenshot: ${errorScreenshotPath} (may fail if browser crashed)`);
         } catch (screenshotError) {
             console.error("Could not take screenshot on error:", screenshotError.message);
         }
     }
-    if (!res.headersSent) { // Check if response hasn't been sent
+    if (!res.headersSent) {
         res.status(500).json({ error: err.message, details: "An error occurred during scraping." });
     }
   } finally { // FINALLY FOR THE OUTER TRY
