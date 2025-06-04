@@ -5,10 +5,21 @@ const app = express();
 const PORT = process.env.PORT || 3000; 
 
 app.get('/run', async (req, res) => {
-  const browser = await puppeteer.launch({
+try {
+  browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: '/usr/bin/chromium-browser', // Tell Puppeteer to use this Chromium
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',     // Often needed in constrained Docker/server environments
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--disable-gpu'                // Can help in headless server environments
+    ],
   });
+  page = await browser.newPage();
   const page = await browser.newPage();
 
   try {
